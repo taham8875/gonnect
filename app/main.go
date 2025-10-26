@@ -2,14 +2,16 @@ package main
 
 import (
 	"fmt"
+	"gonnect/message"
 	"net"
 )
 
-func main() {
+const DNS_PORT = 2053
 
+func main() {
 	// TODO: Uncomment the code below to pass the first stage
 	//
-	udpAddr, err := net.ResolveUDPAddr("udp", "127.0.0.1:2053")
+	udpAddr, err := net.ResolveUDPAddr("udp", fmt.Sprintf("127.0.0.1:%d", DNS_PORT))
 	if err != nil {
 		fmt.Println("Failed to resolve UDP address:", err)
 		return
@@ -22,6 +24,8 @@ func main() {
 	}
 	defer udpConn.Close()
 
+	fmt.Printf("Listening for DNS queries on %s\n", udpAddr.String())
+
 	buf := make([]byte, 512)
 
 	for {
@@ -31,13 +35,17 @@ func main() {
 			break
 		}
 
-		receivedData := string(buf[:size])
-		fmt.Printf("Received %d bytes from %s: %s\n", size, source, receivedData)
+		request, err := message.ParseDNSMessage(buf[:size])
+		if err != nil {
+			fmt.Println("Failed to parse DNS message:", err)
+			continue
+		}
 
-		// Create an empty response
-		response := []byte{}
+		response := message.NewResponse(request)
 
-		_, err = udpConn.WriteToUDP(response, source)
+		responseBytes := response.ToBytes()
+
+		_, err = udpConn.WriteToUDP(responseBytes, source)
 		if err != nil {
 			fmt.Println("Failed to send response:", err)
 		}

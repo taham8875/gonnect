@@ -1,3 +1,3 @@
-module github.com/codecrafters-io/dns-server-starter-go
+module gonnect
 
 go 1.24.0
