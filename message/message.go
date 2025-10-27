@@ -1,9 +1,13 @@
 package message
 
-import "gonnect/header"
+import (
+	"gonnect/header"
+	"gonnect/question"
+)
 
 type DNSMessage struct {
-	Header header.DNSHeader
+	Header   header.DNSHeader
+	Question []question.DNSQuestion
 	// Other fields like Questions, Answers, etc. can be added here later
 }
 
@@ -14,7 +18,20 @@ func ParseDNSMessage(data []byte) (*DNSMessage, error) {
 	}
 
 	dnsMessage := &DNSMessage{
-		Header: *header,
+		Header:   *header,
+		Question: make([]question.DNSQuestion, 0),
+	}
+
+	// parse the question
+	// start after the header
+	offset := 12
+	for i := 0; i < int(header.QDCount); i++ {
+		question, bytesRead, err := question.ParseDNSQuestion(data, offset)
+		if err != nil {
+			return nil, err
+		}
+		dnsMessage.Question = append(dnsMessage.Question, *question)
+		offset += bytesRead
 	}
 
 	return dnsMessage, nil
@@ -24,15 +41,26 @@ func NewResponse(request *DNSMessage) *DNSMessage {
 	responseHeader := header.NewDNSHeader(request.Header.ID)
 	// Set QR flag to 1 (response)
 	responseHeader.Flags |= 0x8000
-	// Set other flags as needed for a response
+
+	// set QDCount to match request question count
+	responseHeader.QDCount = request.Header.QDCount
+
+	questions := make([]question.DNSQuestion, len(request.Question))
+	copy(questions, request.Question)
 
 	return &DNSMessage{
-		Header: *responseHeader,
+		Header:   *responseHeader,
+		Question: questions,
 	}
 }
 
 func (msg *DNSMessage) ToBytes() []byte {
 	headerBytes := msg.Header.ToBytes()
 
-	return headerBytes
+	questionBytes := make([]byte, 0)
+	for _, q := range msg.Question {
+		questionBytes = append(questionBytes, q.ToBytes()...)
+	}
+
+	return append(headerBytes, questionBytes...)
 }
