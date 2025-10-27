@@ -22,6 +22,7 @@ func ParseDNSMessage(data []byte) (*DNSMessage, error) {
 	dnsMessage := &DNSMessage{
 		Header:   *header,
 		Question: make([]question.DNSQuestion, 0),
+		Answer:   make([]answer.DNSResourceRecord, 0),
 	}
 
 	// parse the question
@@ -40,7 +41,7 @@ func ParseDNSMessage(data []byte) (*DNSMessage, error) {
 }
 
 func NewResponse(request *DNSMessage) *DNSMessage {
-	responseHeader := header.NewDNSHeader(request.Header.ID)
+	responseHeader := header.CreateResponseHeader(&request.Header)
 	// Set QR flag to 1 (response)
 	responseHeader.Flags |= 0x8000
 
