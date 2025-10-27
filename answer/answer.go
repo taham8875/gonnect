@@ -27,34 +27,89 @@ func NewARecord(name []byte, ipAddr [4]byte, ttl uint32) *DNSResourceRecord {
 
 func ParseDNSResourceRecord(data []byte, offset int) (*DNSResourceRecord, int, error) {
 	if offset >= len(data) {
-		return nil, offset, fmt.Errorf("offset out of bounds")
+		return nil, 0, fmt.Errorf("offset out of bounds")
 	}
 
 	startOffset := offset
-	offsetCopy := offset
+
+	// Parse name with compression support
+	result := make([]byte, 0)
+	visited := make(map[int]bool)
+	readingFromStream := true
+	var bytesConsumed int = 0
+	currentOffset := offset
 
 	for {
-		if offsetCopy >= len(data) {
-			return nil, offset, fmt.Errorf("offset out of bounds while parsing name")
+		if currentOffset >= len(data) {
+			return nil, bytesConsumed, fmt.Errorf("offset out of bounds while parsing name")
 		}
 
-		labelLen := int(data[offset])
+		// check for infinite loops
+		if visited[currentOffset] {
+			return nil, bytesConsumed, fmt.Errorf("infinite loop detected while parsing name")
+		}
+		visited[currentOffset] = true
 
-		if labelLen == 0 {
-			// end of the name
-			offsetCopy++
+		labelLen := int(data[currentOffset])
+
+		// check if it is a pointer therefore compression
+		if (labelLen & 0xC0) == 0xC0 {
+			if currentOffset+1 >= len(data) {
+				return nil, bytesConsumed, fmt.Errorf("incomplete pointer")
+			}
+
+			// extract the offset from the pointer
+			pointerOffset := (int(labelLen&0x3F) << 8) | int(data[currentOffset+1])
+
+			// calculate bytes consumed from the stream including the pointer
+			if readingFromStream {
+				bytesConsumed = currentOffset + 2 - offset
+			}
+
+			// follow the pointer and expand the name
+			readingFromStream = false
+			expandedName, _, err := extractNameFromAnswer(data, pointerOffset)
+			if err != nil {
+				return nil, bytesConsumed, err
+			}
+
+			result = append(result, expandedName...)
 			break
 		}
 
-		if offsetCopy+labelLen+1 > len(data) {
-			return nil, offset, fmt.Errorf("label length exceeds data length")
+		// not a pointer, regular label
+		if labelLen == 0 {
+			// end of the name
+			result = append(result, 0)
+			currentOffset++
+			if readingFromStream {
+				bytesConsumed = currentOffset - offset
+			}
+			break
 		}
 
-		offsetCopy += labelLen + 1
+		// check bounds for regular labels
+		if labelLen > 63 {
+			return nil, bytesConsumed, fmt.Errorf("label length %d exceeds max 63", labelLen)
+		}
+		if currentOffset+labelLen+1 > len(data) {
+			return nil, bytesConsumed, fmt.Errorf("label length %d exceeds data length at offset %d", labelLen, currentOffset)
+		}
+
+		// Add this label to result
+		result = append(result, data[currentOffset:currentOffset+labelLen+1]...)
+		currentOffset += labelLen + 1
+
+		if bytesConsumed == 0 && readingFromStream {
+			bytesConsumed = currentOffset - offset
+		}
 	}
 
-	name := data[startOffset:offsetCopy]
-	offset = offsetCopy
+	name := result
+	if bytesConsumed == 0 && readingFromStream {
+		bytesConsumed = currentOffset - offset
+	}
+	offset = startOffset + bytesConsumed
 
 	if offset+10 > len(data) {
 		return nil, offset, fmt.Errorf("not enough data for resource record fields")
@@ -89,6 +144,56 @@ func ParseDNSResourceRecord(data []byte, offset int) (*DNSResourceRecord, int, e
 	}
 
 	return resourceRecord, offset - startOffset, nil
+}
+
+func extractNameFromAnswer(data []byte, offset int) ([]byte, int, error) {
+	result := make([]byte, 0)
+	visited := make(map[int]bool)
+	currentOffset := offset
+
+	for {
+		if currentOffset >= len(data) {
+			return nil, 0, fmt.Errorf("offset out of bounds while parsing name")
+		}
+
+		if visited[currentOffset] {
+			return nil, 0, fmt.Errorf("infinite loop detected")
+		}
+		visited[currentOffset] = true
+
+		labelLen := int(data[currentOffset])
+
+		if (labelLen & 0xC0) == 0xC0 {
+			if currentOffset+1 >= len(data) {
+				return nil, 0, fmt.Errorf("incomplete pointer")
+			}
+			pointerOffset := (int(labelLen&0x3F) << 8) | int(data[currentOffset+1])
+			expandedName, _, err := extractNameFromAnswer(data, pointerOffset)
+			if err != nil {
+				return nil, 0, err
+			}
+			result = append(result, expandedName...)
+			break
+		}
+
+		if labelLen == 0 {
+			result = append(result, 0)
+			currentOffset++
+			break
+		}
+
+		if labelLen > 63 {
+			return nil, 0, fmt.Errorf("label length exceeds max")
+		}
+		if currentOffset+labelLen+1 > len(data) {
+			return nil, 0, fmt.Errorf("label exceeds data length")
+		}
+
+		result = append(result, data[currentOffset:currentOffset+labelLen+1]...)
+		currentOffset += labelLen + 1
+	}
+
+	return result, 0, nil
 }
 
 func (rr *DNSResourceRecord) ToBytes() []byte {

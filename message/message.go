@@ -5,6 +5,7 @@ import (
 	"gonnect/answer"
 	"gonnect/header"
 	"gonnect/question"
+	"net"
 )
 
 type DNSMessage struct {
@@ -32,10 +33,19 @@ func ParseDNSMessage(data []byte) (*DNSMessage, error) {
 	for i := 0; i < int(header.QDCount); i++ {
 		question, bytesRead, err := question.ParseDNSQuestion(data, offset)
 		if err != nil {
-			// Return the error for debugging
 			return nil, fmt.Errorf("failed to parse question %d at offset %d: %w", i, offset, err)
 		}
 		dnsMessage.Question = append(dnsMessage.Question, *question)
+		offset += bytesRead
+	}
+
+	// parse the answer section
+	for i := 0; i < int(header.ANCount); i++ {
+		answer, bytesRead, err := answer.ParseDNSResourceRecord(data, offset)
+		if err != nil {
+			return nil, fmt.Errorf("failed to parse answer %d at offset %d: %w", i, offset, err)
+		}
+		dnsMessage.Answer = append(dnsMessage.Answer, *answer)
 		offset += bytesRead
 	}
 
@@ -70,6 +80,108 @@ func NewResponse(request *DNSMessage) *DNSMessage {
 		Question: questions,
 		Answer:   answers,
 	}
+}
+
+func ForwardRequest(request *DNSMessage, resolverAddr string) (*DNSMessage, error) {
+	// if there is one question forward it directly
+	if len(request.Question) == 1 {
+		return forwardOneQuestion(request, resolverAddr)
+	}
+
+	// if not, split into multiple requests and merge
+	return forwardMultipleQuestions(request, resolverAddr)
+}
+
+func forwardOneQuestion(request *DNSMessage, resolverAddr string) (*DNSMessage, error) {
+	queryHeader := &header.DNSHeader{
+		ID:       request.Header.ID,
+		Flags:    0x0100, // RD=1, QR=0
+		QDCount:  1,
+		ANCount:  0,
+		NSCount:  0,
+		AddCount: 0,
+	}
+
+	query := &DNSMessage{
+		Header:   *queryHeader,
+		Question: []question.DNSQuestion{request.Question[0]},
+		Answer:   []answer.DNSResourceRecord{},
+	}
+
+	queryBytes := query.ToBytes()
+
+	// forward the query to the resolver
+	resolverConnection, err := net.Dial("udp", resolverAddr)
+	if err != nil {
+		return nil, fmt.Errorf("failed to connect to resolver: %w", err)
+	}
+
+	defer resolverConnection.Close()
+
+	// send the request
+	_, err = resolverConnection.Write(queryBytes)
+	if err != nil {
+		return nil, fmt.Errorf("failed to send query to resolver: %w", err)
+	}
+
+	// read the response
+	responseBuf := make([]byte, 512)
+	size, err := resolverConnection.Read(responseBuf)
+	if err != nil {
+		return nil, fmt.Errorf("failed to read response from resolver: %w", err)
+	}
+
+	response, err := ParseDNSMessage(responseBuf[:size])
+	if err != nil {
+		return nil, fmt.Errorf("failed to parse response from resolver: %w", err)
+	}
+
+	responseHeader := header.CreateResponseHeader(&request.Header)
+	responseHeader.QDCount = request.Header.QDCount
+	responseHeader.ANCount = response.Header.ANCount
+
+	questions := make([]question.DNSQuestion, len(request.Question))
+
+	copy(questions, request.Question)
+
+	return &DNSMessage{
+		Header:   *responseHeader,
+		Question: questions,
+		Answer:   response.Answer,
+	}, nil
+}
+
+func forwardMultipleQuestions(request *DNSMessage, resolverAddr string) (*DNSMessage, error) {
+	var allAnswers []answer.DNSResourceRecord
+
+	for _, q := range request.Question {
+		singleRequest := &DNSMessage{
+			Header:   request.Header,
+			Question: []question.DNSQuestion{q},
+			Answer:   []answer.DNSResourceRecord{},
+		}
+
+		response, err := forwardOneQuestion(singleRequest, resolverAddr)
+		if err != nil {
+			return nil, err
+		}
+
+		allAnswers = append(allAnswers, response.Answer...)
+	}
+
+	// create the merged  response
+	responseHeader := header.CreateResponseHeader(&request.Header)
+	responseHeader.QDCount = request.Header.QDCount
+	responseHeader.ANCount = uint16(len(allAnswers))
+
+	questions := make([]question.DNSQuestion, len(request.Question))
+	copy(questions, request.Question)
+
+	return &DNSMessage{
+		Header:   *responseHeader,
+		Question: questions,
+		Answer:   allAnswers,
+	}, nil
 }
 
 func (msg *DNSMessage) ToBytes() []byte {
