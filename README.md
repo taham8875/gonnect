@@ -1,36 +1,43 @@
-[![progress-banner](https://backend.codecrafters.io/progress/dns-server/189fa185-b4d5-48be-acc5-d2af5ede912d)](https://app.codecrafters.io/users/codecrafters-bot?r=2qF)
+# DNS Forwarding Server
 
-This is a starting point for Go solutions to the
-["Build Your Own DNS server" Challenge](https://app.codecrafters.io/courses/dns-server/overview).
+A DNS forwarding server written in Go that parses DNS packets, handles name compression, and forwards queries to upstream resolvers.
 
-In this challenge, you'll build a DNS server that's capable of parsing and
-creating DNS packets, responding to DNS queries, handling various record types
-and doing recursive resolve. Along the way we'll learn about the DNS protocol,
-DNS packet format, root servers, authoritative servers, forwarding servers,
-various record types (A, AAAA, CNAME, etc) and more.
+## Features
 
-**Note**: If you're viewing this repo on GitHub, head over to
-[codecrafters.io](https://codecrafters.io) to try the challenge.
+- Parse DNS messages (header, question, answer sections)
+- Handle DNS name compression
+- Forward single and multiple DNS queries to upstream resolvers
+- Merge responses from multiple queries
+- Support A record queries
 
-# Passing the first stage
+## Architecture
 
-The entry point for your `your_program.sh` implementation is in `app/main.go`.
-Study and uncomment the relevant code, and push your changes to pass the first
-stage:
-
-```sh
-git commit -am "pass 1st stage" # any msg
-git push origin master
+```
+app/
+  main.go          # UDP server and CLI
+message/
+  message.go       # DNS message parsing and forwarding
+header/
+  header.go        # DNS header parsing
+question/
+  question.go      # Question section parsing
+answer/
+  answer.go        # Answer section parsing
 ```
 
-Time to move on to the next stage!
+## Usage
 
-# Stage 2 & beyond
+Run the server with a resolver:
 
-Note: This section is for stages 2 and beyond.
+```bash
+./your_program.sh --resolver 8.8.8.8:53
+```
 
-1. Ensure you have `go (1.24)` installed locally
-1. Run `./your_program.sh` to run your program, which is implemented in
-   `app/main.go`.
-1. Commit your changes and run `git push origin master` to submit your solution
-   to CodeCrafters. Test output will be streamed to your terminal.
+The server listens on port 2053 and forwards DNS queries to the specified resolver.
+
+## Implementation Details
+
+- **Compression Support**: Handles DNS name compression via pointers (2-byte offsets)
+- **Query Splitting**: Automatically splits multi-question queries when necessary
+- **Response Merging**: Combines responses from split queries
+- **Flag Preservation**: Maintains original OPCODE, RD, and transaction ID values
