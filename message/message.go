@@ -1,6 +1,7 @@
 package message
 
 import (
+	"gonnect/answer"
 	"gonnect/header"
 	"gonnect/question"
 )
@@ -8,6 +9,7 @@ import (
 type DNSMessage struct {
 	Header   header.DNSHeader
 	Question []question.DNSQuestion
+	Answer   []answer.DNSResourceRecord
 	// Other fields like Questions, Answers, etc. can be added here later
 }
 
@@ -48,9 +50,24 @@ func NewResponse(request *DNSMessage) *DNSMessage {
 	questions := make([]question.DNSQuestion, len(request.Question))
 	copy(questions, request.Question)
 
+	answers := make([]answer.DNSResourceRecord, 0)
+	for _, q := range questions {
+		if q.Type == 1 { // A record request
+			// create dummy record with ip 8.8.8.8
+			// in real life dns, this would be looked up from a database or external source
+			ipAddr := [4]byte{8, 8, 8, 8}
+			aRecord := answer.NewARecord(q.Name, ipAddr, 300)
+			answers = append(answers, *aRecord)
+		}
+	}
+
+	// set ANCount to number of answers
+	responseHeader.ANCount = uint16(len(answers))
+
 	return &DNSMessage{
 		Header:   *responseHeader,
 		Question: questions,
+		Answer:   answers,
 	}
 }
 
@@ -62,5 +79,13 @@ func (msg *DNSMessage) ToBytes() []byte {
 		questionBytes = append(questionBytes, q.ToBytes()...)
 	}
 
-	return append(headerBytes, questionBytes...)
+	answerBytes := make([]byte, 0)
+	for _, a := range msg.Answer {
+		answerBytes = append(answerBytes, a.ToBytes()...)
+	}
+
+	messageBytes := append(headerBytes, questionBytes...)
+	messageBytes = append(messageBytes, answerBytes...)
+
+	return messageBytes
 }
