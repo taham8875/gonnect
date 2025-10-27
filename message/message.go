@@ -1,6 +1,7 @@
 package message
 
 import (
+	"fmt"
 	"gonnect/answer"
 	"gonnect/header"
 	"gonnect/question"
@@ -31,7 +32,8 @@ func ParseDNSMessage(data []byte) (*DNSMessage, error) {
 	for i := 0; i < int(header.QDCount); i++ {
 		question, bytesRead, err := question.ParseDNSQuestion(data, offset)
 		if err != nil {
-			return nil, err
+			// Return the error for debugging
+			return nil, fmt.Errorf("failed to parse question %d at offset %d: %w", i, offset, err)
 		}
 		dnsMessage.Question = append(dnsMessage.Question, *question)
 		offset += bytesRead
@@ -42,8 +44,6 @@ func ParseDNSMessage(data []byte) (*DNSMessage, error) {
 
 func NewResponse(request *DNSMessage) *DNSMessage {
 	responseHeader := header.CreateResponseHeader(&request.Header)
-	// Set QR flag to 1 (response)
-	responseHeader.Flags |= 0x8000
 
 	// set QDCount to match request question count
 	responseHeader.QDCount = request.Header.QDCount
